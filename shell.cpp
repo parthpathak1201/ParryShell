@@ -21,6 +21,7 @@
 #include <sys/wait.h>
 
 #include "history.h"
+#include "parser.h"
 
 /*
 Certain commands/tools might be missing from this file, the purpose of this repo is not to create a very good shell
@@ -130,7 +131,7 @@ void init_env_vars() {
 
 std::unordered_map<string, CommandFunc> command_map;
 
-void EXIT(const vecS &tokens, LogCallback &append_output) {
+void EXIT(const std::vector<std::string>& tokens, LogCallback append_output) {
     if (active_child_pid > 0) {
         {
             std::lock_guard<std::mutex> lock(output_mutex);
@@ -166,7 +167,7 @@ void EXIT(const vecS &tokens, LogCallback &append_output) {
     QCoreApplication::exit(exit_code);
 }
 
-void ECHO(vecS &tokens, const LogCallback &append_output) {
+void ECHO(const std::vector<std::string>& tokens, LogCallback append_output) {
     if (tokens.size() < 2) {
         append_output("\n", 0);
         return;
@@ -218,7 +219,7 @@ void ECHO(vecS &tokens, const LogCallback &append_output) {
     }
 }
 
-void CLEAR(vecS &tokens, LogCallback append_output) {
+void CLEAR(const std::vector<std::string>& tokens, LogCallback append_output) {
     {
         std::lock_guard<std::mutex> lock(output_mutex);
 
@@ -227,7 +228,7 @@ void CLEAR(vecS &tokens, LogCallback append_output) {
     }
 }
 
-void CD(vecS &tokens, LogCallback append_output) {
+void CD(const std::vector<std::string>& tokens, LogCallback append_output) {
     update_current_directory();
 
     if (tokens.size() > 2) {
@@ -276,7 +277,7 @@ void CD(vecS &tokens, LogCallback append_output) {
     update_current_directory();
 }
 
-void PWD(vecS &tokens, LogCallback append_output) {
+void PWD(const std::vector<std::string>& tokens, LogCallback append_output) {
     char *cwd = getcwd(nullptr, 0);
     std::string cwd_str = cwd ? std::string(cwd) : std::string(".");
     if (cwd) free(cwd);
@@ -287,7 +288,7 @@ void PWD(vecS &tokens, LogCallback append_output) {
     }
 }
 
-void LS(vecS &tokens, LogCallback append_output) {
+void LS(const std::vector<std::string>& tokens, LogCallback append_output) {
     using namespace std::filesystem;
     std::error_code ec;
 
@@ -371,7 +372,7 @@ void LS(vecS &tokens, LogCallback append_output) {
     }
 }
 
-void ENV(vecS &tokens, const LogCallback &append_output) {
+void ENV(const std::vector<std::string>& tokens, LogCallback append_output) {
     std::vector<std::pair<std::string, std::string> > entries;
     entries.reserve(env_vars.size());
     for (const auto &p: env_vars) entries.emplace_back(p.first, p.second);
@@ -424,13 +425,13 @@ void ENV(vecS &tokens, const LogCallback &append_output) {
 bool is_valid_env_var(const std::string &key) {
     if (key.empty()) return false;
     return std::ranges::all_of(key, [](unsigned char c) {
-        return std::isupper(c) || std::isdigit(c);
+        return std::isupper(c) || std::isdigit(c) || c == '_';
     });
 }
 
 std::unordered_map<string, string> set_vars;
 
-void SET(const vecS &tokens, const LogCallback &append_output) {
+void SET(const std::vector<std::string>& tokens, LogCallback append_output) {
     if (tokens.size() == 1) {
         if (set_vars.empty()) {
             append_output("Warning: No environment variables set\n", 2);
@@ -461,7 +462,7 @@ void SET(const vecS &tokens, const LogCallback &append_output) {
         setenv(key.c_str(), value.c_str(), 1);
         env_vars[key] = value;
         set_vars[key] = value;
-        append_output(std::format("Set {}={}", key, value), 4);
+        append_output(std::format("Set {}={}\n", key, value), 4);
 
         if (ERR) {
             append_output("Warning: Non-standard variable name.\n", 2);
@@ -471,7 +472,7 @@ void SET(const vecS &tokens, const LogCallback &append_output) {
     }
 }
 
-void UNSET(const vecS &tokens, const LogCallback &append_output) {
+void UNSET(const std::vector<std::string>& tokens, LogCallback append_output) {
     if (tokens.size() != 2) {
         append_output("Usage: unset VAR", 1);
         return;
@@ -480,7 +481,7 @@ void UNSET(const vecS &tokens, const LogCallback &append_output) {
     const string &key = tokens[1];
 
     if (!set_vars.contains(key)) {
-        append_output("Warning: Variable 'VAR' is not set.", 2);
+        append_output("Warning: Variable '" + key + "' is not set.\n", 2);
         return;
     }
 
@@ -491,7 +492,7 @@ void UNSET(const vecS &tokens, const LogCallback &append_output) {
 }
 
 
-void HISTORY_cmd(vecS &tokens, const LogCallback &append_output) {
+void HISTORY_cmd(const std::vector<std::string>& tokens, LogCallback append_output) {
     if (cmd_history.empty()) {
         append_output("No commands in history.\n", 2);
         return;
@@ -518,7 +519,7 @@ void HISTORY_cmd(vecS &tokens, const LogCallback &append_output) {
 
 std::unordered_map<std::string, std::string> aliases;
 
-void ALIAS_cmd(vecS &tokens, const LogCallback &append_output) {
+void ALIAS_cmd(const std::vector<std::string>& tokens, LogCallback append_output) {
     if (tokens.size() == 1) {
         if (aliases.empty()) {
             append_output(std::format("Warning: No aliases with key = {} is set\n", ""), 2);
@@ -551,7 +552,7 @@ void ALIAS_cmd(vecS &tokens, const LogCallback &append_output) {
     }
 }
 
-void UNALIAS_cmd(vecS &tokens, const LogCallback &append_output) {
+void UNALIAS_cmd(const std::vector<std::string>& tokens, LogCallback append_output) {
     if (aliases.empty()) {
         append_output("Warning: No aliases set\n", 2);
         return;
@@ -571,7 +572,7 @@ void UNALIAS_cmd(vecS &tokens, const LogCallback &append_output) {
     append_output(std::format("Unset {}", tokens[1]), 4);
 }
 
-void TYPE(vecS &tokens, const LogCallback &append_output) {
+void TYPE(const std::vector<std::string>& tokens, LogCallback append_output) {
     if (tokens.size() < 2) {
         append_output("Usage: type command_name\n", 0);
         return;
@@ -613,7 +614,7 @@ void TYPE(vecS &tokens, const LogCallback &append_output) {
 }
 
 
-void WHICH(vecS &tokens, const LogCallback &append_output) {
+void WHICH(const std::vector<std::string>& tokens, LogCallback append_output) {
     if (tokens.size() < 2) {
         append_output("Usage: which command_name\n", 0);
         return;
@@ -641,7 +642,7 @@ void WHICH(vecS &tokens, const LogCallback &append_output) {
     }
 }
 
-void MKDIR(vecS &tokens, const LogCallback &append_output) {
+void MKDIR(const std::vector<std::string>& tokens, LogCallback append_output) {
     if (tokens.size() < 2) {
         append_output("Error: mkdir requires a directory name.\n", 1);
         return;
@@ -667,7 +668,7 @@ void MKDIR(vecS &tokens, const LogCallback &append_output) {
     }
 }
 
-void RMDIR(vecS &tokens, const LogCallback &append_output) {
+void RMDIR(const std::vector<std::string>& tokens, LogCallback append_output) {
     if (tokens.size() < 2) {
         append_output("Error: rmdir requires a directory name.\n", 1);
         return;
@@ -699,7 +700,7 @@ void RMDIR(vecS &tokens, const LogCallback &append_output) {
     }
 }
 
-void TOUCH(vecS &tokens, const LogCallback &append_output) {
+void TOUCH(const std::vector<std::string>& tokens, LogCallback append_output) {
     if (tokens.size() < 2) {
         append_output("Error: touch requires a filename.\n", 1);
         return;
@@ -717,7 +718,7 @@ void TOUCH(vecS &tokens, const LogCallback &append_output) {
     }
 }
 
-void RM(vecS &tokens, const LogCallback &append_output) {
+void RM(const std::vector<std::string>& tokens, LogCallback append_output) {
     if (tokens.size() < 2) {
         append_output("Error: rm requires a filename.\n", 1);
         return;
@@ -746,7 +747,7 @@ void RM(vecS &tokens, const LogCallback &append_output) {
     }
 }
 
-void CAT(vecS &tokens, const LogCallback &append_output) {
+void CAT(const std::vector<std::string>& tokens, LogCallback append_output) {
     if (tokens.size() < 2) {
         append_output("Error: cat requires a filename.\n", 1);
         return;
@@ -774,7 +775,7 @@ void CAT(vecS &tokens, const LogCallback &append_output) {
     append_output(content, 0);
 }
 
-void HELP(vecS &tokens, const LogCallback &append_output) {
+void HELP(const std::vector<std::string>& tokens, LogCallback append_output) {
     append_output("ParryShell - A simple custom shell implementation\n", 4);
     append_output("Built-in commands:\n", 4);
     append_output(" exit [code]       ", 2);
@@ -812,27 +813,27 @@ void HELP(vecS &tokens, const LogCallback &append_output) {
 void init() {
     update_current_directory();
 
-    command_map["exit"] = reinterpret_cast<std::unordered_map<string, CommandFunc>::mapped_type>(EXIT);
-    command_map["echo"] = reinterpret_cast<std::unordered_map<string, CommandFunc>::mapped_type>(ECHO);
-    command_map["cls"] = reinterpret_cast<std::unordered_map<string, CommandFunc>::mapped_type>(CLEAR);
-    command_map["clear"] = reinterpret_cast<std::unordered_map<string, CommandFunc>::mapped_type>(CLEAR);
-    command_map["cd"] = reinterpret_cast<std::unordered_map<string, CommandFunc>::mapped_type>(CD);
-    command_map["pwd"] = reinterpret_cast<std::unordered_map<string, CommandFunc>::mapped_type>(PWD);
-    command_map["ls"] = reinterpret_cast<std::unordered_map<string, CommandFunc>::mapped_type>(LS);
-    command_map["env"] = reinterpret_cast<std::unordered_map<string, CommandFunc>::mapped_type>(ENV);
-    command_map["set"] = reinterpret_cast<std::unordered_map<string, CommandFunc>::mapped_type>(SET);
-    command_map["unset"] = reinterpret_cast<std::unordered_map<string, CommandFunc>::mapped_type>(UNSET);
-    command_map["alias"] = reinterpret_cast<std::unordered_map<string, CommandFunc>::mapped_type>(ALIAS_cmd);
-    command_map["history"] = reinterpret_cast<std::unordered_map<string, CommandFunc>::mapped_type>(HISTORY_cmd);
-    command_map["unalias"] = reinterpret_cast<std::unordered_map<string, CommandFunc>::mapped_type>(UNALIAS_cmd);
-    command_map["which"] = reinterpret_cast<std::unordered_map<string, CommandFunc>::mapped_type>(WHICH);
-    command_map["type"] = reinterpret_cast<std::unordered_map<string, CommandFunc>::mapped_type>(TYPE);
-    command_map["mkdir"] = reinterpret_cast<std::unordered_map<string, CommandFunc>::mapped_type>(MKDIR);
-    command_map["rmdir"] = reinterpret_cast<std::unordered_map<string, CommandFunc>::mapped_type>(RMDIR);
-    command_map["touch"] = reinterpret_cast<std::unordered_map<string, CommandFunc>::mapped_type>(TOUCH);
-    command_map["rm"] = reinterpret_cast<std::unordered_map<string, CommandFunc>::mapped_type>(RM);
-    command_map["cat"] = reinterpret_cast<std::unordered_map<string, CommandFunc>::mapped_type>(CAT);
-    command_map["help"] = reinterpret_cast<std::unordered_map<string, CommandFunc>::mapped_type>(HELP);
+    command_map["exit"] = EXIT;
+    command_map["echo"] = ECHO;
+    command_map["cls"] = CLEAR;
+    command_map["clear"] = CLEAR;
+    command_map["cd"] = CD;
+    command_map["pwd"] = PWD;
+    command_map["ls"] = LS;
+    command_map["env"] = ENV;
+    command_map["set"] = SET;
+    command_map["unset"] = UNSET;
+    command_map["alias"] = ALIAS_cmd;
+    command_map["history"] = HISTORY_cmd;
+    command_map["unalias"] = UNALIAS_cmd;
+    command_map["which"] = WHICH;
+    command_map["type"] = TYPE;
+    command_map["mkdir"] = MKDIR;
+    command_map["rmdir"] = RMDIR;
+    command_map["touch"] = TOUCH;
+    command_map["rm"] = RM;
+    command_map["cat"] = CAT;
+    command_map["help"] = HELP;
 }
 
 std::string handle_tab_completion(const std::string &currentInput) {
@@ -905,14 +906,77 @@ void handle_single(const vecS &tokens, LogCallback append_output) {
     const string &cmd = tokens[0];
     append_output("\n", 0);
 
+    if (aliases.contains(cmd)) {
+        auto alias_tokens = parse_(aliases[cmd]);
+        handle_(alias_tokens, aliases[cmd].size(), append_output);
+        return;
+    }
+
     const auto it_cmd = command_map.find(cmd);
     if (it_cmd != command_map.end()) {
         it_cmd->second(tokens, std::move(append_output));
     } else {
-        {
-            std::lock_guard<std::mutex> lock(output_mutex);
-            append_output("Command not found: " + cmd, 1);
-        }
+        std::thread([tokens, append_output, cmd]() {
+            int out[2];
+            if (pipe(out) < 0) return;
+
+            pid_t pid = fork();
+            if (pid == 0) {
+                dup2(out[1], STDOUT_FILENO);
+                dup2(out[1], STDERR_FILENO);
+                close(out[0]);
+                close(out[1]);
+                const auto argv = build_argv(tokens);
+                execvp(argv[0], argv.data());
+                _exit(127);
+            } else if (pid > 0) {
+                active_child_pid = pid;
+                close(out[1]);
+
+                char buf[4096];
+                ssize_t bytes;
+                bool truncated = false;
+                size_t totalBytes = 0;
+
+                while ((bytes = read(out[0], buf, sizeof(buf))) > 0) {
+                    totalBytes += bytes;
+                    if (totalBytes > 10 * 1024 * 1024) {
+                        kill(pid, SIGKILL);
+                        truncated = true;
+                        break;
+                    }
+                    {
+                        std::lock_guard<std::mutex> lock(output_mutex);
+                        append_output(std::string(buf, bytes), 0);
+                    }
+                }
+                close(out[0]);
+
+                int status;
+                waitpid(pid, &status, 0);
+                active_child_pid = 0;
+
+                if (WIFEXITED(status) && WEXITSTATUS(status) == 127) {
+                    append_output("Command not found: " + cmd + "\n", 1);
+                } else if (truncated) {
+                    {
+                        std::lock_guard<std::mutex> lock(output_mutex);
+                        append_output("\nWarning: Output truncated. Process output exceeded 10 MB limit.\n", 2);
+                    }
+                } else if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
+                    {
+                        std::lock_guard<std::mutex> lock(output_mutex);
+                        append_output("\nProcess exited with code: " + std::to_string(WEXITSTATUS(status)) + "\n", 2);
+                    }
+                }
+
+                {
+                    std::lock_guard<std::mutex> lock(output_mutex);
+                    append_output("\n", 0);
+                    append_output("", 1);
+                }
+            }
+        }).detach();
     }
 
     append_output("\n", 0);
@@ -1042,7 +1106,7 @@ void handle_(const vecS &tokens, const size_t arg_len, const LogCallback &append
             ssize_t bytes;
             size_t totalBytes = 0;
             bool truncated = false;
-
+            bool first_chunk = true;
 
             while ((bytes = read(out[0], buf, sizeof(buf))) > 0) {
                 totalBytes += bytes;
@@ -1054,7 +1118,12 @@ void handle_(const vecS &tokens, const size_t arg_len, const LogCallback &append
                 }
                 {
                     std::lock_guard<std::mutex> lock(output_mutex);
-                    append_output(std::string(buf, bytes), 0);
+                    if (first_chunk) {
+                        append_output(std::string("\n") + std::string(buf, bytes), 0);
+                        first_chunk = false;
+                    } else {
+                        append_output(std::string(buf, bytes), 0);
+                    }
                 }
             }
 
@@ -1091,10 +1160,10 @@ void handle_(const vecS &tokens, const size_t arg_len, const LogCallback &append
                 }
             }
 
-
             {
                 std::lock_guard<std::mutex> lock(output_mutex);
                 append_output("\n", 0);
+                append_output("", 1);
             }
         }).detach();
     }

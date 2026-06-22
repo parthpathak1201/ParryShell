@@ -332,6 +332,7 @@ private:
         updatePromptLabel();
 
         inputField->clear();
+        history_index = 0;
     }
 
     void flushOutputBuffer() {
@@ -339,11 +340,9 @@ private:
 
         QString qtext = QString::fromStdString(outputBuffer);
         int colorCode = outputColorBuffer;
-        
-        
-        
-        
-        
+        outputBuffer.clear();
+        outputColorBuffer = 0;
+
         auto doInsert = [this, qtext, colorCode]() {
             
             outputView->moveCursor(QTextCursor::End);
@@ -376,12 +375,6 @@ private:
 
             
             outputView->verticalScrollBar()->setValue(outputView->verticalScrollBar()->maximum());
-
-            
-            
-            
-            outputBuffer.clear();
-            outputColorBuffer = 0;
         };
 
         
@@ -413,7 +406,7 @@ private:
 void WIN() {
     
     
-    int argc = 1;
+    static int argc = 1;
     char *argv[] = {(char *) "ParryShell", nullptr};
 
     QApplication app(argc, argv);
